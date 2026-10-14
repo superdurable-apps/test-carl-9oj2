@@ -13,11 +13,8 @@ import (
 	"github.com/superdurable/dex/sdk-go/dex"
 )
 
-// Handler implements openapi/openapi.yaml. Business state lives in Dex Flows;
-// handlers start Flows and read their snapshots through the Dex Client.
-type Handler struct {
-	client *dex.Client
-}
+// Handler maps the OpenAPI contract to the authoritative HotspotRadarFlow.
+type Handler struct{ client *dex.Client }
 
 func NewHandler(client *dex.Client) (*generated.Server, error) {
 	return generated.NewServer(&Handler{client: client},
@@ -32,62 +29,66 @@ func NewHandler(client *dex.Client) (*generated.Server, error) {
 	)
 }
 
-// NewError answers a handler error with a 500 and logs the end of the error;
-// the response never carries it.
 func (*Handler) NewError(ctx context.Context, err error) *generated.ErrorStatusCode {
 	slog.ErrorContext(ctx, "API handler failed", "error", process.ErrorTail(err))
-	return &generated.ErrorStatusCode{
-		StatusCode: http.StatusInternalServerError,
-		Response:   generated.ErrorResponse{Error: "application_unavailable", Message: "application is unavailable"},
-	}
+	return &generated.ErrorStatusCode{StatusCode: http.StatusInternalServerError,
+		Response: generated.ErrorResponse{Error: "application_unavailable", Message: "application is unavailable"}}
 }
-
 func (*Handler) GetHealth(context.Context) (*generated.HealthResponse, error) {
 	return &generated.HealthResponse{Status: generated.HealthResponseStatusOk}, nil
 }
-
-func (handler *Handler) StartTextSummary(ctx context.Context, request *generated.StartTextSummaryRequest) (*generated.TextSummaryAccepted, error) {
-	text := strings.TrimSpace(request.Text)
-	if text == "" || len(text) > process.MaximumTextSummaryBytes {
-		return nil, apiError(http.StatusBadRequest, "invalid_text", "Enter 1 to 65,536 bytes of text.")
-	}
+func (handler *Handler) RequestRadarRun(ctx context.Context, request *generated.RadarRunRequest) (*generated.RadarRunAccepted, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := process.StartTextSummary(ctx, handler.client, request.RequestId.String(), text); err != nil {
+	if err := process.RequestRadarRun(ctx, handler.client, request.RequestId.String()); err != nil {
 		return nil, err
 	}
-	return &generated.TextSummaryAccepted{SummaryId: request.RequestId}, nil
+	return &generated.RadarRunAccepted{RequestId: request.RequestId}, nil
 }
-
-func (handler *Handler) GetTextSummary(ctx context.Context, params generated.GetTextSummaryParams) (*generated.TextSummary, error) {
+func (handler *Handler) GetRadar(ctx context.Context) (*generated.RadarSnapshot, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	snapshot, found, err := process.ReadTextSummary(ctx, handler.client, params.SummaryId.String())
+	snapshot, err := process.ReadRadar(ctx, handler.client)
 	if err != nil {
 		return nil, err
 	}
-	if !found {
-		return nil, apiError(http.StatusNotFound, "summary_not_found", "No summary exists with this ID.")
+	hotspots := make([]generated.RadarHotspot, 0, len(snapshot.Hotspots))
+	for _, h := range snapshot.Hotspots {
+		evidence := make([]generated.RadarEvidence, 0, len(h.Evidence))
+		for _, e := range h.Evidence {
+			evidence = append(evidence, generated.RadarEvidence{
+				ID: e.ID, Title: e.Title, Text: e.Text, Author: e.Author, Score: e.Score, URL: e.URL, ObservedAt: e.ObservedAt,
+			})
+		}
+		hotspots = append(hotspots, generated.RadarHotspot{Name: h.Name, Concept: h.Concept, Primitives: h.Primitives,
+			PrimitivesEn: h.PrimitivesEN, SearchTerms: h.SearchTerms, Domain: generated.RadarHotspotDomain(h.Domain),
+			AuthorCount: h.AuthorCount, FirstSeen: h.FirstSeen, Evidence: evidence})
 	}
-	return &generated.TextSummary{
-		Status:       generated.TextSummaryStatus(snapshot.Status),
-		Summary:      snapshot.Summary,
-		Model:        snapshot.Model,
-		InputTokens:  snapshot.InputTokens,
-		OutputTokens: snapshot.OutputTokens,
-		TotalTokens:  snapshot.TotalTokens,
-		Notice:       snapshot.Notice,
-	}, nil
+	return &generated.RadarSnapshot{RoundNumber: snapshot.RoundNumber, Status: snapshot.Status, LastRunAt: snapshot.LastRunAt, NextRunAt: snapshot.NextRunAt,
+		NewHotspots: snapshot.NewHotspots, NoiseCount: snapshot.NoiseCount, PendingCount: snapshot.PendingCount, SourceStatus: snapshot.SourceStatus,
+		Report: snapshot.Report, HTML: snapshot.HTML, Hotspots: hotspots}, nil
 }
-
+func (*Handler) BacktestRadar(_ context.Context, request *generated.BacktestRequest) (*generated.BacktestResult, error) {
+	if strings.TrimSpace(request.KnownHotspot) == "" || len(request.Items) == 0 || len(request.Items) > 500 || request.WidespreadAt.IsZero() {
+		return nil, apiError(http.StatusBadRequest, "invalid_backtest", "Provide a hotspot, broad-discussion time and 1 to 500 items.")
+	}
+	items := make([]process.HistoricalItem, 0, len(request.Items))
+	for _, item := range request.Items {
+		if item.Time.IsZero() || strings.TrimSpace(item.Title) == "" || item.Score < 0 {
+			return nil, apiError(http.StatusBadRequest, "invalid_backtest", "Every item needs a time, title and nonnegative score.")
+		}
+		items = append(items, process.HistoricalItem{Time: item.Time, Title: item.Title, Text: item.Text, Author: item.Author, Score: item.Score})
+	}
+	outcome := process.Backtest(items, request.KnownHotspot, request.WidespreadAt)
+	return &generated.BacktestResult{Detected: outcome.Detected, DetectedAt: outcome.DetectedAt,
+		LeadHours: outcome.LeadHours, Interpretation: outcome.Interpretation}, nil
+}
 func apiError(status int, code, message string) *generated.ErrorStatusCode {
 	return &generated.ErrorStatusCode{StatusCode: status, Response: generated.ErrorResponse{Error: code, Message: message}}
 }
-
 func writeGeneratedError(_ context.Context, w http.ResponseWriter, _ *http.Request, _ error) {
 	writeError(w, http.StatusBadRequest, "invalid_request", "request does not match the OpenAPI contract")
 }
-
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

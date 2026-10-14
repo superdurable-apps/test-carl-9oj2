@@ -13,6 +13,7 @@ import (
 	"time"
 
 	api "github.com/superdurable/dex-template-basic-process/internal/api"
+	"github.com/superdurable/dex-template-basic-process/internal/process"
 	"github.com/superdurable/dex-template-basic-process/internal/worker"
 )
 
@@ -38,6 +39,11 @@ func run() error {
 	}
 	server := &http.Server{Addr: ":" + environment("PORT", "8080"), Handler: applicationHandler(apiHandler), ReadHeaderTimeout: 5 * time.Second}
 	workerResult := worker.Start()
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer startupCancel()
+	if err := process.StartHotspotRadar(startupCtx, worker.Client); err != nil {
+		return fmt.Errorf("start daily hotspot radar: %w", err)
+	}
 	serverResult := make(chan error, 1)
 	go func() { serverResult <- server.ListenAndServe() }()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

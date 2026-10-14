@@ -24,7 +24,7 @@ func ErrorTail(err error) string {
 // the Preview or Live log. Every handler defers it with its named error
 // result:
 //
-//	defer logFailure(ctx, TextSummaryFlow{}, "PrepareSummary", &err)
+//	defer logFailure(ctx, HotspotRadarFlow{}, "DetectBursts", &err)
 //
 // A line names the Flow type, the FlowID, the handler, the attempt and the end
 // of the error, never an input, an output or an Attribute value.

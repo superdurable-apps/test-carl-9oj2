@@ -7,6 +7,7 @@ require (
 	github.com/go-faster/jx v1.2.0
 	github.com/google/uuid v1.6.0
 	github.com/ogen-go/ogen v1.24.0
+	github.com/superdurable/dex-connectors-library/connectors/hackernews v0.21.1
 	github.com/superdurable/dex-connectors-library/connectors/superdurable/llm v0.22.1
 	github.com/superdurable/dex-connectors-library/sdkgo v0.29.1
 	github.com/superdurable/dex/blob-cache-go v0.1.1

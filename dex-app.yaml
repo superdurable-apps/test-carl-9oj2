@@ -6,12 +6,20 @@
   },
   "flowDefinitions": [
     {
-      "sourcePath": "internal/process/text_summary_flow.go"
+      "sourcePath": "internal/process/hotspot_radar_flow.go"
     }
   ],
   "connectors": [
     {
-      "connectionName": "summary-model",
+      "connectionName": "hacker-news-public",
+      "connectorId": "hacker-news-daily",
+      "modulePath": "github.com/superdurable/dex-connectors-library/connectors/hackernews",
+      "version": "v0.21.1",
+      "authMethodId": "",
+      "operations": ["listStoryIDs", "getItem"]
+    },
+    {
+      "connectionName": "radar-model",
       "connectorId": "llm",
       "modulePath": "github.com/superdurable/dex-connectors-library/connectors/superdurable/llm",
       "version": "v0.22.1",
